@@ -124,3 +124,45 @@ Matters for callers that process many files in a loop.
   pypdfium2, on-demand matplotlib import).
 - Robust baseline estimate via histogram peak rather than mean/median.
 - Calibration actually used is always recorded in the output metadata.
+
+---
+
+# Code Review 2 — raster digitizer + unified CLI
+
+Scope: `src/spike/ecg_raster.py`, the new `src/spike/cli.py`, `__init__.py`,
+`pyproject.toml`, `tests/`. Seven finder angles + verification; all findings
+below were reproduced and **fixed** in the same change, with tests added.
+
+### Fixed
+- **`--auto` silently overrode an explicit `--type`** (`cli.main`). `spike
+  --type vector --auto x.pdf` discarded the forced pipeline. Now a conflict is
+  an explicit error (`test_cli_auto_conflicts_with_explicit_type`).
+- **`_pdf_is_vector` mis-routed undecodable vector PDFs.** A bare `except`
+  returned "scanned", so an encrypted / exotic-filter *vector* PDF was sent to
+  the lossy raster path. Now it assumes vector on decode failure, so the
+  lossless pipeline runs and raises a clear error if the file is truly unusable.
+- **`_count_path_ops` over-matched.** It counted any whitespace-delimited
+  `m/l/c/v/y`, so stray letters inside drawn text could mark a scanned page as
+  vector. Now it requires a numeric operand before the operator
+  (`test_count_path_ops_ignores_lone_letters_in_text`).
+- **Dead / divergent vector CLI.** The entry point moved to `spike.cli:main`,
+  leaving `ecg_pdf._main` as a second, drifting CLI; removed it and updated the
+  README (it had advertised `python -m spike.ecg_pdf`).
+- **Missing baselines silently dropped leads** (`_baselines`). Fewer projection
+  peaks than printed rows truncated the lead set; now falls back to even
+  spacing so every layout row gets a baseline.
+- **`_load_channels` ndarray range.** A `[0,1]` float image (a common numpy
+  convention) made every `< 232` threshold treat the frame as solid ink; now
+  scaled to 0–255.
+- **pypdfium2 handle leak** (`_render_pdf_page`): the page and bitmap are now
+  closed alongside the document.
+- **Smaller items:** `--auto` install hint named only `meta` (raster also needs
+  `image`) → now `spike[image,meta]`; the "wrote …" line dropped the `-o` dir
+  (printed basenames) → now full paths; removed a dead no-op branch and the
+  unused `RASTER_EXTS` in `resolve_kind`; dropped CLI-internal `resolve_kind`
+  from the package's public `__all__`.
+
+### Known limitation (not changed)
+- The rhythm lead is resampled to the full `strip_seconds` after the leading
+  calibration pulse is trimmed, leaving ~0.2 s of flat padding at its tail. Low
+  severity and pre-existing; noted for a future pass.
