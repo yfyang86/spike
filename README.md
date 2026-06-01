@@ -159,6 +159,38 @@ ecg = extract_ecg("file.pdf", layout=layout)
 
 ---
 
+## Raster images (scans / screenshots)
+
+When you only have a rasterized ECG (a scan, photo, or screenshot) rather than a
+vector PDF, `spike` can *digitize* it — necessarily lossy, but calibrated:
+
+```python
+from spike import extract_ecg_image
+
+ecg = extract_ecg_image("ECG_scan.png")   # -> the same ECGResult
+ecg.rows_to_csv("rows.csv")
+t, mv = ecg.leads["V5"]
+```
+
+Needs the `image` extra (`pip install ".[image]"` → pillow + scipy). The
+digitizer:
+
+* finds the grid scale from the **heavy 5 mm lines** (the fine 1 mm grid is
+  often dotted/faint and unreliable), so calibration is robust;
+* masks the trace by **darkness over the max-of-RGB channels**, so a coloured
+  (red / orange / pink) grid drops out and only the black trace remains; an
+  Otsu split then separates the trace from a dark/grey grid;
+* tracks each row's centreline with a follower that **climbs steep QRS limbs to
+  the true R/S peak** instead of averaging them, then splits the row into its
+  per-column leads (trimming the calibration pulse and inter-lead transitions).
+
+On a clean coloured-grid scan this is accurate — e.g. recovered
+`R(V5)+S(V1) = 1.69 mV` against a printed `1.70 mV`. A dark/near-black grid is
+the hard case: the grid contaminates the trace mask and amplitudes can be
+under-recovered. Tunable knobs (`px_per_mm`, `trace_darkness`, `window_frac`,
+`max_jump_frac`, …) are exposed on `RasterECGExtractor`. As always, **verify
+against the source image** — this is an extraction aid, not a diagnostic device.
+
 ## Limitations / honest caveats
 
 * **Vector PDFs only.** A scanned/raster ECG has no path segments to recover;

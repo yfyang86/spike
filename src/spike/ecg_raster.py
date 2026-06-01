@@ -16,12 +16,12 @@ prefer the vector pipeline whenever a vector PDF is available.
 Pipeline
 --------
 1. Load the image, grayscale it, and find the waveform bounding box.
-2. Grid scale: dominant periodicity of the vertical grid lines (FFT primary,
-   modal grid-line spacing as a robust cross-check), divided into mm.
-3. Trace mask: pixels locally much darker than a median-filtered background, on
-   the max-over-channels image so a coloured (red / orange / pink) grid — whose
-   pixels are light in at least one channel — disappears while the black trace
-   survives.
+2. Grid scale: spacing of the heavy 5 mm grid lines (the solid, reliable comb),
+   divided by 5 to give px per mm.
+3. Trace mask: the darkest ink, via an Otsu split of the max-over-channels
+   image. The max-channel makes a coloured (red / orange / pink) grid light (it
+   is high in at least one channel) so it drops out; Otsu then separates the
+   black trace from any remaining dark/grey grid.
 4. Baselines: the per-row y where the trace dwells (projection peaks).
 5. Track each row's centreline; split into the per-column leads, trimming the
    leading calibration pulse and the inter-lead pen transitions.
@@ -65,11 +65,13 @@ class RasterECGExtractor:
         Output sample rate (Hz).
     nrows : int
         Number of printed rows to detect (defaults to ``len(layout)``).
-    trace_darkness : float
-        Min ``background - pixel`` (0-255) for a pixel to count as trace.
-        ``None`` picks an Otsu threshold automatically.
+    trace_darkness : float, optional
+        ``None`` (default) masks the trace by an Otsu split of the darkness
+        image. Set a value (0-255) to switch to local-contrast mode: keep pixels
+        more than this much darker than a median-filtered background (for
+        unevenly lit photos).
     bg_size : int
-        Median-filter window (px) used to estimate the local background.
+        Median-filter window (px) for the local-contrast background.
     window_frac : float
         Tracking half-window as a fraction of the inter-row spacing.
     max_jump_frac : float
@@ -88,7 +90,7 @@ class RasterECGExtractor:
         px_per_mm: Optional[float] = None,
         fs: float = 100.0,
         nrows: Optional[int] = None,
-        trace_darkness: Optional[float] = 26.0,
+        trace_darkness: Optional[float] = None,
         bg_size: int = 9,
         window_frac: float = 0.45,
         max_jump_frac: float = 0.6,
@@ -112,8 +114,6 @@ class RasterECGExtractor:
 
     # -- public ----------------------------------------------------------- #
     def extract(self, image_path: str) -> ECGResult:
-        from scipy import ndimage
-
         ink, dark = self._load_channels(image_path)
         box = self._bounding_box(ink)
         x0, y0, x1, y1 = box
@@ -122,8 +122,7 @@ class RasterECGExtractor:
         upmv = pmm * self.gain
         ups = pmm * self.speed
 
-        bg = ndimage.median_filter(dark, size=(self.bg_size, self.bg_size))
-        mask = self._trace_mask(dark, bg, box)
+        mask = self._trace_mask(dark, box)
 
         baselines, spacing = self._baselines(mask, box, self.nrows)
         win = int(round(spacing * self.window_frac))
@@ -207,57 +206,60 @@ class RasterECGExtractor:
         return int(cols.min()), int(rows.min()), int(cols.max()), int(rows.max())
 
     def _grid_px_per_mm(self, L: np.ndarray, box) -> float:
-        """Pixels per mm from the vertical grid-line pitch.
+        """Pixels per mm from the *heavy* (5 mm) grid lines.
 
-        FFT gives the dominant periodicity; a modal grid-line spacing is used as
-        a robust cross-check so a Fourier harmonic (or the heavy 5 mm comb on a
-        blurry scan) can't silently set the scale 5x wrong.
+        Clinical ECG paper carries a heavy line every 5 mm; these are solid and
+        the most reliable feature, whereas the fine 1 mm grid is often
+        dotted/faint and can either vanish from or dominate a naive FFT (which
+        silently sets the scale 5x wrong). We detect the prominent, regularly
+        spaced vertical lines (the heavy grid) from the ink projection and divide
+        their median spacing by 5.
         """
         from scipy.signal import find_peaks
 
         x0, y0, x1, y1 = box
-        nw = (L < 232).astype(float)
-        col = nw[y0:y1, x0:x1].sum(0)
-        col = col - col.mean()
-
-        F = np.abs(np.fft.rfft(col))
-        F[0] = 0
-        fr = np.fft.rfftfreq(len(col))
-        k = int(np.argmax(F[1:])) + 1
-        pmm_fft = 1.0 / fr[k]
-
-        # modal spacing of detected vertical grid lines
-        pk, _ = find_peaks(col, distance=max(2, int(pmm_fft * 0.6)))
-        pmm = pmm_fft
-        if len(pk) > 5:
-            sp = np.diff(pk)
-            vals, counts = np.unique(np.round(sp).astype(int), return_counts=True)
-            pmm_mode = float(vals[np.argmax(counts)])
-            # trust the modal pitch when it is consistent with the FFT estimate
-            if 0.5 * pmm_fft <= pmm_mode <= 2.0 * pmm_fft:
-                pmm = pmm_mode
+        # darkness-weighted column projection: heavy (darker) lines score higher
+        # than a faint or dotted fine grid, so they stand out as the major peaks
+        col = np.clip(232.0 - L[y0:y1, x0:x1], 0, None).sum(0)
+        pk, props = find_peaks(col, distance=2, prominence=1)
+        if len(pk) < 3:
+            raise ValueError("Could not detect grid lines; pass px_per_mm.")
+        prom = props["prominences"]
+        major = pk[prom >= 0.5 * prom.max()]
+        spacing = (np.median(np.diff(major)) if len(major) > 2
+                   else np.median(np.diff(pk)))
+        pmm = float(spacing) / 5.0
         if not (2.0 <= pmm <= 60.0):
             raise ValueError(
                 f"Auto-detected px/mm={pmm:.2f} is implausible; pass px_per_mm."
             )
         return pmm
 
-    def _trace_mask(self, L: np.ndarray, bg: np.ndarray, box) -> np.ndarray:
-        """Pixels locally much darker than the background (grid-colour agnostic)."""
+    def _trace_mask(self, dark: np.ndarray, box) -> np.ndarray:
+        """Mask the waveform.
+
+        The trace is the darkest ink: darker than the grid in *every* channel, so
+        an Otsu split of the max-over-channels image over the inked pixels
+        isolates it for coloured *and* dark grids alike. Setting
+        ``trace_darkness`` switches to a local-contrast mode (pixels much darker
+        than a median-filtered background) for unevenly lit photos.
+        """
         x0, y0, x1, y1 = box
-        diff = bg - L
-        thr = self.trace_darkness
-        if thr is None:
-            thr = self._otsu(diff[y0:y1, x0:x1])
-        mask = np.zeros(L.shape, bool)
-        mask[y0:y1, x0:x1] = diff[y0:y1, x0:x1] > thr
+        mask = np.zeros(dark.shape, bool)
+        if self.trace_darkness is not None:
+            from scipy import ndimage
+            bg = ndimage.median_filter(dark, size=(self.bg_size, self.bg_size))
+            mask[y0:y1, x0:x1] = (bg - dark)[y0:y1, x0:x1] > self.trace_darkness
+            return mask
+        region = dark[y0:y1, x0:x1]
+        thr = self._otsu(region[region < 232])
+        mask[y0:y1, x0:x1] = region < thr
         return mask
 
     @staticmethod
     def _otsu(d: np.ndarray) -> float:
-        d = d[d > 0]
         if d.size == 0:
-            return 26.0
+            return 128.0
         hist, edges = np.histogram(d, bins=64)
         p = hist / hist.sum()
         centers = (edges[:-1] + edges[1:]) / 2

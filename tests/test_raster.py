@@ -7,10 +7,11 @@ scipy = pytest.importorskip("scipy")
 from spike import RasterECGExtractor, extract_ecg_image  # noqa: E402
 
 
-def test_grid_px_per_mm_from_synthetic_grid():
-    # vertical grid lines every 8 px -> 8 px/mm
+def test_grid_px_per_mm_from_heavy_lines():
+    # faint fine grid every 8 px + heavy lines every 5th (40 px) -> 40/5 = 8 px/mm
     L = np.full((200, 400), 255.0)
-    L[:, ::8] = 120.0
+    L[:, ::8] = 180.0       # fine 1 mm grid
+    L[:, ::40] = 60.0       # heavy 5 mm grid (more prominent)
     ext = RasterECGExtractor()
     pmm = ext._grid_px_per_mm(L, (0, 0, 400, 200))
     assert pmm == pytest.approx(8.0, abs=0.5)
@@ -54,11 +55,13 @@ def _synthetic_ecg_png(path, pmm=8, speed=25, gain=10, nrows=4):
     W = int(secs * ups) + 40
     H = top + nrows * spacing + 40
     L = np.full((H, W), 255, np.uint8)
-    # faint 1 mm grid: dark enough to be "non-white" (<232, for box & px/mm) but
-    # light enough that the local-darkness trace mask (bg - L > ~26) ignores it
+    # faint fine 1 mm grid + a darker heavy line every 5 mm (as on real ECG
+    # paper); both are lighter than the near-black trace so Otsu masks it out
     g = int(round(pmm))
     L[:, ::g] = 230
     L[::g, :] = 230
+    L[:, :: 5 * g] = 180
+    L[:: 5 * g, :] = 180
     baselines = [top + spacing // 2 + i * spacing for i in range(nrows)]
     x = np.arange(20, W - 20)
     r_mv = 0.8                        # known R-wave height in mV
