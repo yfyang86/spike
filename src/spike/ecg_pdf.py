@@ -522,45 +522,5 @@ def extract_ecg(pdf_path: str, **kwargs) -> ECGResult:
     return ECGExtractor(**kwargs).extract(pdf_path)
 
 
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
-def _main(argv=None):
-    import argparse
-    import os
-
-    ap = argparse.ArgumentParser(description="Extract time series from a vector ECG PDF.")
-    ap.add_argument("pdf")
-    ap.add_argument("-o", "--outdir", default=".")
-    ap.add_argument("--gain", type=float, default=10.0, help="mm per mV")
-    ap.add_argument("--speed", type=float, default=25.0, help="mm per second")
-    ap.add_argument("--fs", type=float, default=100.0, help="output sample rate Hz")
-    ap.add_argument("--units-per-mm", type=float, default=None,
-                    help="override auto grid-scale detection")
-    ap.add_argument("--polarity", choices=["auto", "pos", "neg"], default="auto")
-    ap.add_argument("--plot", action="store_true")
-    args = ap.parse_args(argv)
-
-    os.makedirs(args.outdir, exist_ok=True)
-    ecg = extract_ecg(
-        args.pdf, gain_mm_per_mv=args.gain, speed_mm_per_s=args.speed,
-        fs=args.fs, units_per_mm=args.units_per_mm, polarity=args.polarity,
-    )
-    base = os.path.join(args.outdir,
-                        os.path.splitext(os.path.basename(args.pdf))[0])
-    ecg.rows_to_csv(base + "_rows.csv")
-    ecg.leads_to_csv(base + "_leads.csv")
-    ecg.meta_to_json(base + "_meta.json")
-    if args.plot:
-        ecg.plot(base + "_plot.png")
-    print(f"units/mm={ecg.units_per_mm:.3f}  fs={ecg.fs}Hz  "
-          f"strip={ecg.strip_seconds:.2f}s  leads={list(ecg.leads)}")
-    print(f"wrote {base}_rows.csv, {base}_leads.csv, {base}_meta.json"
-          + (", _plot.png" if args.plot else ""))
-
-
-if __name__ == "__main__":
-    _main()
-
-# console-script entry point
-main = _main
+# The command-line interface lives in :mod:`spike.cli`, which routes both vector
+# PDFs and raster images (and rasterizes scanned/image-only PDFs).

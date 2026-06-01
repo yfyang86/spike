@@ -10,6 +10,7 @@ from .ecg_raster import (
     RasterECGExtractor,
     extract_ecg_image,
 )
+from .cli import main
 
 __version__ = "0.1.0"
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "DEFAULT_LAYOUT",
     "RasterECGExtractor",
     "extract_ecg_image",
+    "main",
     "__version__",
 ]

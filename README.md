@@ -61,26 +61,33 @@ print(ecg.fs, ecg.units_per_mm, ecg.strip_seconds)
 
 ### Command line
 
-Installing the package provides a `spike` console script:
+Installing the package provides a single `spike` console script that handles
+both a vector PDF and a raster image, and writes `<name>_rows.csv`,
+`<name>_leads.csv`, `<name>_meta.json` (and `_plot.png` with `--plot`) under
+`-o OUTDIR`:
 
 ```bash
-spike ECG01.pdf -o out/ --plot
+spike ECG01.pdf -o out/ --plot      # vector PDF -> exact recovery
+spike scan.png  -o out/             # raster scan/screenshot -> approximate
+spike --auto scanned.pdf -o out/    # image-only PDF -> rendered, then rasterized
 ```
 
-Writes `out/ECG01_rows.csv`, `out/ECG01_leads.csv`, `out/ECG01_meta.json`
-(and `_plot.png` with `--plot`).
+By default (`--type auto`) the input is auto-detected: a vector PDF goes to the
+lossless pipeline, a **scanned / image-only ("Ghostscript") PDF** is rendered to
+a bitmap and sent to the raster pipeline, and an image file goes straight to the
+raster pipeline. Pass `--type vector|raster` to force one.
 
 ```
-spike PDF [-o OUTDIR] [--gain 10] [--speed 25] [--fs 100]
-          [--units-per-mm FLOAT] [--polarity auto|pos|neg] [--plot]
+spike INPUT [-o OUTDIR] [--type auto|vector|raster] [--auto]
+            [--gain 10] [--speed 25] [--fs 100] [--plot]
+            [--units-per-mm FLOAT] [--polarity auto|pos|neg]   # vector
+            [--px-per-mm FLOAT] [--trace-darkness FLOAT]
+            [--no-suppress-grid] [--dpi 300]                   # raster
 ```
 
-You can also run the module directly without installing:
+Rendering a scanned PDF needs the optional extras: `pip install 'spike[image,meta]'`.
 
-```bash
-## QUICK START EXAMPLE
-python -m spike.ecg_pdf ECG01.pdf -o out/ --plot
-```
+You can also run it without installing: `python -m spike.cli ECG01.pdf -o out/`.
 
 ---
 

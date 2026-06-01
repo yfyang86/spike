@@ -135,8 +135,8 @@ class RasterECGExtractor:
         self.trim_calibration_mv = trim_calibration_mv
 
     # -- public ----------------------------------------------------------- #
-    def extract(self, image_path: str) -> ECGResult:
-        ink, dark = self._load_channels(image_path)
+    def extract(self, image: "str | np.ndarray") -> ECGResult:
+        ink, dark = self._load_channels(image)
         box = self._bounding_box(ink)
         x0, y0, x1, y1 = box
 
@@ -206,8 +206,11 @@ class RasterECGExtractor:
 
     # -- image / grid ----------------------------------------------------- #
     @staticmethod
-    def _load_channels(image_path: str) -> Tuple[np.ndarray, np.ndarray]:
+    def _load_channels(image) -> Tuple[np.ndarray, np.ndarray]:
         """Return ``(ink, dark)`` lightness maps.
+
+        ``image`` may be a file path, a PIL ``Image``, or an RGB(A) ``ndarray``
+        (e.g. a PDF page rendered by the CLI's ``--auto`` mode).
 
         ``ink`` = per-pixel min over RGB: low wherever there is any ink (grid or
         trace, any colour), ~255 on the white background — used to find the grid
@@ -216,7 +219,15 @@ class RasterECGExtractor:
         light here and drops out — used to mask the trace.
         """
         from PIL import Image
-        rgb = np.asarray(Image.open(image_path).convert("RGB")).astype(float)
+        if isinstance(image, np.ndarray):
+            rgb = image[..., :3] if image.ndim == 3 else np.stack([image] * 3, -1)
+            rgb = rgb.astype(float)
+            if np.issubdtype(image.dtype, np.floating) and rgb.max() <= 1.0:
+                rgb *= 255.0          # accept the [0,1] float-image convention
+        elif isinstance(image, Image.Image):
+            rgb = np.asarray(image.convert("RGB")).astype(float)
+        else:
+            rgb = np.asarray(Image.open(image).convert("RGB")).astype(float)
         return rgb.min(2), rgb.max(2)
 
     @staticmethod
@@ -330,11 +341,13 @@ class RasterECGExtractor:
         proj = ndimage.gaussian_filter1d(mask[:, x0:x1].sum(1).astype(float), 3)
         minsep = int(self.row_sep_frac * (y1 - y0) / nrows)
         pk, _ = signal.find_peaks(proj, distance=max(1, minsep))
-        if len(pk) == 0:
-            # fall back to even spacing
-            pk = np.linspace(y0, y1, nrows + 2)[1:-1].astype(int)
-        else:
+        if len(pk) >= nrows:
             pk = np.sort(pk[np.argsort(proj[pk])[::-1][:nrows]])
+        else:
+            # Fewer projection peaks than printed rows (faint or merged rows):
+            # fall back to even spacing so every layout row still gets a
+            # baseline instead of silently dropping its leads.
+            pk = np.linspace(y0, y1, nrows + 2)[1:-1].astype(int)
         spacing = int(np.median(np.diff(pk))) if len(pk) > 1 else (y1 - y0) // nrows
         return pk, max(spacing, 4)
 
@@ -440,6 +453,9 @@ class RasterECGExtractor:
         return grid, np.interp(grid, t, v)
 
 
-def extract_ecg_image(image_path: str, **kwargs) -> ECGResult:
-    """Convenience wrapper: ``RasterECGExtractor(**kwargs).extract(image_path)``."""
-    return RasterECGExtractor(**kwargs).extract(image_path)
+def extract_ecg_image(image, **kwargs) -> ECGResult:
+    """Convenience wrapper: ``RasterECGExtractor(**kwargs).extract(image)``.
+
+    ``image`` is a file path, a PIL ``Image``, or an RGB(A) ``ndarray``.
+    """
+    return RasterECGExtractor(**kwargs).extract(image)

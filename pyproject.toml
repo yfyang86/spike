@@ -38,7 +38,7 @@ all = ["pypdfium2>=4.0", "matplotlib>=3.6", "pillow>=10.0", "scipy>=1.10"]
 dev = ["pypdfium2>=4.0", "matplotlib>=3.6", "pillow>=10.0", "scipy>=1.10", "pytest>=8.0"]
 
 [project.scripts]
-spike = "spike.ecg_pdf:main"
+spike = "spike.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yfyang86/spike"
