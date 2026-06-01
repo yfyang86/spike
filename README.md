@@ -78,6 +78,7 @@ spike PDF [-o OUTDIR] [--gain 10] [--speed 25] [--fs 100]
 You can also run the module directly without installing:
 
 ```bash
+## QUICK START EXAMPLE
 python -m spike.ecg_pdf ECG01.pdf -o out/ --plot
 ```
 
@@ -178,4 +179,9 @@ ecg = extract_ecg("file.pdf", layout=layout)
 
 ## License
 
-MIT.
+Apache 2
+
+## Contributor
+
+- Yifan Yang <yfyang.86 hotmail>
+
