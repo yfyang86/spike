@@ -70,6 +70,7 @@ def _synthetic_ecg_png(path, pmm=8, speed=25, gain=10, nrows=4):
     period = int(0.8 * ups)
     for b in baselines:
         yt = np.full(len(x), float(b))
+        yt += 3.0 * np.sin(np.linspace(0, 4 * np.pi, len(x)))   # gentle baseline wander
         for xc0 in range(int(0.3 * ups), len(x), period):   # skip a flat lead-in
             for dx in range(-hw, hw + 1):
                 j = xc0 + dx

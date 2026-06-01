@@ -77,6 +77,18 @@ class RasterECGExtractor:
     max_jump_frac : float
         Reject per-column jumps larger than this fraction of the window
         (suppresses latching onto a neighbouring row's tall R/S wave).
+    suppress_grid : bool
+        Remove full-span grid lines (and isolated dots) from the trace mask.
+        Essential for dark/near-black grids that survive the Otsu split; it also
+        keeps a stray heavy line from being mistaken for a row baseline.
+    grid_vspan, grid_hspan : float
+        A mask column/row that is "on" for more than this fraction of the box
+        height/width is treated as a heavy vertical/horizontal grid line and
+        cleared. Heavy lines span the full box; the wandering trace does not.
+    min_blob_px : int
+        Drop connected components smaller than this (the dotted fine grid).
+    row_sep_frac : float
+        Minimum row-baseline separation as a fraction of ``box_height / nrows``.
     trim_connector_mv, trim_calibration_mv : float
         Off-baseline thresholds used to drop inter-lead pen transitions and the
         leading calibration pulse.
@@ -95,6 +107,11 @@ class RasterECGExtractor:
         window_frac: float = 0.45,
         max_jump_frac: float = 0.6,
         steep_run_px: int = 4,
+        suppress_grid: bool = True,
+        grid_vspan: float = 0.5,
+        grid_hspan: float = 0.7,
+        min_blob_px: int = 4,
+        row_sep_frac: float = 0.7,
         trim_connector_mv: float = 0.5,
         trim_calibration_mv: float = 0.5,
     ):
@@ -109,6 +126,11 @@ class RasterECGExtractor:
         self.window_frac = window_frac
         self.max_jump_frac = max_jump_frac
         self.steep_run_px = steep_run_px
+        self.suppress_grid = suppress_grid
+        self.grid_vspan = grid_vspan
+        self.grid_hspan = grid_hspan
+        self.min_blob_px = min_blob_px
+        self.row_sep_frac = row_sep_frac
         self.trim_connector_mv = trim_connector_mv
         self.trim_calibration_mv = trim_calibration_mv
 
@@ -123,6 +145,8 @@ class RasterECGExtractor:
         ups = pmm * self.speed
 
         mask = self._trace_mask(dark, box)
+        if self.suppress_grid:
+            mask = self._suppress_grid_lines(mask, box)
 
         baselines, spacing = self._baselines(mask, box, self.nrows)
         win = int(round(spacing * self.window_frac))
@@ -271,13 +295,40 @@ class RasterECGExtractor:
         sigma_b = (muT * w - mu) ** 2 / denom
         return float(centers[int(np.argmax(sigma_b))])
 
+    def _suppress_grid_lines(self, mask: np.ndarray, box) -> np.ndarray:
+        """Clear full-span grid lines and isolated dots from the trace mask.
+
+        Heavy grid lines span the full box height (vertical) or width
+        (horizontal); the wandering trace never does, so a high span fraction
+        identifies them. A connected-component size filter then drops the dotted
+        fine grid. Punching a 1-px gap where the trace crosses a removed line is
+        harmless — the tracker interpolates across it.
+        """
+        from scipy import ndimage
+
+        x0, y0, x1, y1 = box
+        sub = mask[y0:y1, x0:x1].copy()
+        h, w = sub.shape
+        sub[:, sub.sum(0) > self.grid_vspan * h] = False
+        sub[sub.sum(1) > self.grid_hspan * w, :] = False
+        if self.min_blob_px > 1:
+            lab, n = ndimage.label(sub)
+            if n:
+                sizes = np.bincount(lab.ravel())
+                keep = sizes >= self.min_blob_px
+                keep[0] = False
+                sub = keep[lab]
+        out = mask.copy()
+        out[y0:y1, x0:x1] = sub
+        return out
+
     def _baselines(self, mask: np.ndarray, box, nrows: int) -> Tuple[np.ndarray, int]:
         """Row baselines = y-positions where the trace dwells (projection peaks)."""
         from scipy import ndimage, signal
 
         x0, y0, x1, y1 = box
         proj = ndimage.gaussian_filter1d(mask[:, x0:x1].sum(1).astype(float), 3)
-        minsep = int(0.55 * (y1 - y0) / nrows)
+        minsep = int(self.row_sep_frac * (y1 - y0) / nrows)
         pk, _ = signal.find_peaks(proj, distance=max(1, minsep))
         if len(pk) == 0:
             # fall back to even spacing
