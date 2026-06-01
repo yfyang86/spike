@@ -97,6 +97,26 @@ Matters for callers that process many files in a loop.
   pythonpath = ["src"]
   ```
 
+## Resolution (applied on this branch)
+
+- **H1** — fixed: `test_raster_pdf_raises` now monkeypatches `_content_stream`
+  to return segment-free content and asserts `extract()` raises; added
+  `test_no_segments_returns_empty`.
+- **H2** — hardened: detection now uses the *modal* gap (robust to missing /
+  doubled lines) and the heavy-line assumption is documented, with guidance to
+  pass `units_per_mm` when light gridlines are full-height. A complete fix needs
+  stroke-width information that the segment endpoints don't carry.
+- **M1** — fixed: now Apache-2.0 in `pyproject.toml` (text + classifier) and
+  README, matching the `LICENSE` file.
+- **M2** — fixed: `_SEG_RE` now tolerates CRLF / loose whitespace; added
+  `test_segments_tolerate_crlf`.
+- **M3** — fixed: pikepdf, the fallback file handle, and pypdfium2 documents are
+  now closed (context managers / `try/finally`).
+- **L1–L6** — fixed: dead vars removed; `strip_seconds` computed once; clearer
+  `_trim_connector`; rhythm leads resampled by membership (not exact name);
+  real repo URLs; `[tool.pytest.ini_options] pythonpath = ["src"]` so `pytest`
+  runs from a clean checkout.
+
 ## What's good
 - Clear module docstring and README that honestly state assumptions and the
   "not a diagnostic device" caveat.

@@ -179,7 +179,7 @@ ecg = extract_ecg("file.pdf", layout=layout)
 
 ## License
 
-Apache 2
+Apache 2.0
 
 ## Contributor
 

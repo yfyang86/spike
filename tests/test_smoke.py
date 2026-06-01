@@ -21,9 +21,21 @@ def test_baseline_is_histogram_peak():
     assert ECGExtractor._baseline(coord) == pytest.approx(50.0, abs=2.0)
 
 
-def test_raster_pdf_raises(tmp_path):
-    # a content stream with no vector segments should fail clearly
+def test_segments_tolerate_crlf():
+    # the segment tokenizer must cope with CRLF line endings, not just \n
+    content = "10 20 m\r\n30 40 l\r\nS\r\n50 60 m\n70 80 l\nS\n"
+    segs = ECGExtractor._segments(content)
+    assert segs == [(10.0, 20.0, 30.0, 40.0), (50.0, 60.0, 70.0, 80.0)]
+
+
+def test_no_segments_returns_empty():
+    # a content stream with no vector segments yields no polylines
+    assert ECGExtractor()._polylines([]) == []
+
+
+def test_raster_pdf_raises(monkeypatch):
+    # a content stream with no vector segments should fail clearly in extract()
     ext = ECGExtractor()
-    with pytest.raises(ValueError):
-        ext._polylines([])  # no segments
-        raise ValueError("no segments")
+    monkeypatch.setattr(ext, "_content_stream", lambda path: ("q Q\n", 0))
+    with pytest.raises(ValueError, match="vector"):
+        ext.extract("dummy.pdf")
