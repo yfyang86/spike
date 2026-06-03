@@ -8,13 +8,13 @@ version = "0.1.0"
 description = "Extract calibrated waveform time series and metadata from vector ECG report PDFs."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 keywords = ["ecg", "ekg", "pdf", "digitization", "signal", "electrocardiogram", "waveform"]
 authors = [{ name = "spike contributors" }]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
     "Topic :: Scientific/Engineering :: Information Analysis",
@@ -31,16 +31,21 @@ dependencies = [
 meta = ["pypdfium2>=4.0"]
 # ECGResult.plot() sanity figures.
 plot = ["matplotlib>=3.6"]
+# Digitize raster (scanned / screenshot) ECG images.
+image = ["pillow>=10.0", "scipy>=1.10"]
 # Everything, plus the test/dev toolchain.
-all = ["pypdfium2>=4.0", "matplotlib>=3.6"]
-dev = ["pypdfium2>=4.0", "matplotlib>=3.6", "pytest>=8.0"]
+all = ["pypdfium2>=4.0", "matplotlib>=3.6", "pillow>=10.0", "scipy>=1.10"]
+dev = ["pypdfium2>=4.0", "matplotlib>=3.6", "pillow>=10.0", "scipy>=1.10", "pytest>=8.0"]
 
 [project.scripts]
-spike = "spike.ecg_pdf:main"
+spike = "spike.cli:main"
 
 [project.urls]
-Homepage = "https://example.com/spike"
-Source = "https://example.com/spike"
+Homepage = "https://github.com/yfyang86/spike"
+Source = "https://github.com/yfyang86/spike"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spike"]

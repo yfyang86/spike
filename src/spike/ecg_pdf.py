@@ -63,8 +63,11 @@ DEFAULT_LAYOUT: List[List[str]] = [
     ["II_rhythm"],
 ]
 
+# Whitespace between tokens is matched loosely (\s+) so that CRLF line endings
+# and minor spacing variations between carts still tokenize.
 _SEG_RE = re.compile(
-    r"(-?[0-9.]+) (-?[0-9.]+) m\n(-?[0-9.]+) (-?[0-9.]+) l\nS"
+    r"(-?[0-9.]+)\s+(-?[0-9.]+)\s+m\s+"
+    r"(-?[0-9.]+)\s+(-?[0-9.]+)\s+l\s+S"
 )
 
 
@@ -244,7 +247,9 @@ class ECGExtractor:
         leads: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
         rows: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
         n_short_cols = max(len(r) for r in self.layout[:-1]) if len(self.layout) > 1 else 1
-        col_secs = (self._strip_seconds(traces, ti, t0, ups)) / n_short_cols
+        strip_secs = self._strip_seconds(traces, ti, t0, ups)
+        col_secs = strip_secs / n_short_cols
+        rhythm_lead_names: set = set()
 
         for ri, names in enumerate(self.layout):
             plist = sorted(rows_pts[ri], key=lambda p: p[:, ti].min())
@@ -261,16 +266,18 @@ class ECGExtractor:
                 name = names[ci] if ci < len(names) else f"{names[0]}_{ci}"
                 # native lead time re-zeroed to its column
                 leads[name] = (t - (t[0] if len(t) else 0.0), v)
+                if is_rhythm:
+                    rhythm_lead_names.add(name)
 
             rt = np.concatenate(row_t)
             rv = np.concatenate(row_v)
             order = np.argsort(rt)
             rows[f"row{ri+1}"] = self._resample(rt[order], rv[order], self.fs)
 
-        # resample leads onto uniform grids
+        # resample leads onto uniform grids: rhythm leads span the full strip,
+        # short leads span a single column window.
         for name, (t, v) in list(leads.items()):
-            dur = (self._strip_seconds(traces, ti, t0, ups)
-                   if name == self.layout[-1][0] else col_secs)
+            dur = strip_secs if name in rhythm_lead_names else col_secs
             leads[name] = self._resample_fixed(t, v, self.fs, dur)
 
         meta = parse_metadata(pdf_path) or {}
@@ -279,7 +286,7 @@ class ECGExtractor:
             units_per_mm=upm, units_per_mv=upmv, units_per_s=ups,
             layout=self.layout, n_columns=n_short_cols,
             column_seconds=col_secs,
-            strip_seconds=self._strip_seconds(traces, ti, t0, ups),
+            strip_seconds=strip_secs,
         )
 
     # -- internals -------------------------------------------------------- #
@@ -287,14 +294,15 @@ class ECGExtractor:
     def _content_stream(pdf_path: str) -> Tuple[str, int]:
         try:
             import pikepdf
-            pdf = pikepdf.open(pdf_path)
-            page = pdf.pages[0]
-            rotate = int(page.get("/Rotate", 0)) % 360
-            data = page.Contents.read_bytes()
+            with pikepdf.open(pdf_path) as pdf:
+                page = pdf.pages[0]
+                rotate = int(page.get("/Rotate", 0)) % 360
+                data = page.Contents.read_bytes()
             return data.decode("latin1"), rotate
         except ImportError:
             # minimal fallback: inflate the first flate stream by hand
-            raw = open(pdf_path, "rb").read()
+            with open(pdf_path, "rb") as fh:
+                raw = fh.read()
             rotate = 0
             m = re.search(rb"/Rotate\s+(\d+)", raw)
             if m:
@@ -331,7 +339,13 @@ class ECGExtractor:
     @staticmethod
     def _grid_units_per_mm(segs) -> float:
         """Heavy grid lines sit 5 mm apart. Find the modal spacing of the
-        long axis-aligned grid strokes and divide by 5."""
+        long axis-aligned grid strokes and divide by 5.
+
+        Assumes the full-height vertical strokes are the *heavy* (5 mm) grid
+        lines, as on the reference cart. If a cart also draws the light 1 mm
+        lines as full-height strokes the detected spacing would be 1 mm and the
+        scale 5x too small — pass ``units_per_mm`` explicitly in that case.
+        """
         arr = np.asarray(segs, float)
         spans_x = np.abs(arr[:, 2] - arr[:, 0])
         spans_y = np.abs(arr[:, 3] - arr[:, 1])
@@ -341,8 +355,12 @@ class ECGExtractor:
         if len(coords) >= 3:
             diffs = np.diff(np.sort(coords))
             diffs = diffs[diffs > 1]
-            spacing = np.median(diffs)
-            return spacing / 5.0
+            if len(diffs):
+                # modal spacing is more robust than the median to a few missing
+                # or doubled grid lines
+                vals, counts = np.unique(np.round(diffs, 1), return_counts=True)
+                spacing = float(vals[np.argmax(counts)])
+                return spacing / 5.0
         raise ValueError("Could not auto-detect grid scale; pass units_per_mm.")
 
     @staticmethod
@@ -357,9 +375,8 @@ class ECGExtractor:
             cut = np.sort(np.argsort(gaps)[-(n_rows - 1):])
         else:
             cut = np.array([], int)
-        groups, start = {}, 0
         labels = np.zeros(len(sb), int)
-        for gi, c in enumerate(cut):
+        for c in cut:
             labels[c + 1:] += 1
         rows = {i: [] for i in range(n_rows)}
         for idx, lab in zip(order, labels):
@@ -404,7 +421,8 @@ class ECGExtractor:
             k += 1
         if k:
             t = t[k:] - t[k] + t[0]
-        return t[:], v[k:] if k else v
+            v = v[k:]
+        return t, v
 
     @staticmethod
     def _strip_seconds(traces, ti, t0, ups) -> float:
@@ -439,7 +457,10 @@ def parse_metadata(pdf_path: str) -> dict:
     except ImportError:
         return {}
     pdf = pdfium.PdfDocument(pdf_path)
-    txt = pdf[0].get_textpage().get_text_range()
+    try:
+        txt = pdf[0].get_textpage().get_text_range()
+    finally:
+        pdf.close()
 
     def find(pat, cast=str, group=1):
         m = re.search(pat, txt)
@@ -501,45 +522,5 @@ def extract_ecg(pdf_path: str, **kwargs) -> ECGResult:
     return ECGExtractor(**kwargs).extract(pdf_path)
 
 
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
-def _main(argv=None):
-    import argparse
-    import os
-
-    ap = argparse.ArgumentParser(description="Extract time series from a vector ECG PDF.")
-    ap.add_argument("pdf")
-    ap.add_argument("-o", "--outdir", default=".")
-    ap.add_argument("--gain", type=float, default=10.0, help="mm per mV")
-    ap.add_argument("--speed", type=float, default=25.0, help="mm per second")
-    ap.add_argument("--fs", type=float, default=100.0, help="output sample rate Hz")
-    ap.add_argument("--units-per-mm", type=float, default=None,
-                    help="override auto grid-scale detection")
-    ap.add_argument("--polarity", choices=["auto", "pos", "neg"], default="auto")
-    ap.add_argument("--plot", action="store_true")
-    args = ap.parse_args(argv)
-
-    os.makedirs(args.outdir, exist_ok=True)
-    ecg = extract_ecg(
-        args.pdf, gain_mm_per_mv=args.gain, speed_mm_per_s=args.speed,
-        fs=args.fs, units_per_mm=args.units_per_mm, polarity=args.polarity,
-    )
-    base = os.path.join(args.outdir,
-                        os.path.splitext(os.path.basename(args.pdf))[0])
-    ecg.rows_to_csv(base + "_rows.csv")
-    ecg.leads_to_csv(base + "_leads.csv")
-    ecg.meta_to_json(base + "_meta.json")
-    if args.plot:
-        ecg.plot(base + "_plot.png")
-    print(f"units/mm={ecg.units_per_mm:.3f}  fs={ecg.fs}Hz  "
-          f"strip={ecg.strip_seconds:.2f}s  leads={list(ecg.leads)}")
-    print(f"wrote {base}_rows.csv, {base}_leads.csv, {base}_meta.json"
-          + (", _plot.png" if args.plot else ""))
-
-
-if __name__ == "__main__":
-    _main()
-
-# console-script entry point
-main = _main
+# The command-line interface lives in :mod:`spike.cli`, which routes both vector
+# PDFs and raster images (and rasterizes scanned/image-only PDFs).

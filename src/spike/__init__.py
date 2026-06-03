@@ -1,4 +1,4 @@
-"""spike — extract calibrated waveform time series from vector ECG PDFs."""
+"""spike — extract calibrated waveform time series from ECG PDFs and images."""
 from .ecg_pdf import (
     ECGExtractor,
     ECGResult,
@@ -6,6 +6,11 @@ from .ecg_pdf import (
     parse_metadata,
     DEFAULT_LAYOUT,
 )
+from .ecg_raster import (
+    RasterECGExtractor,
+    extract_ecg_image,
+)
+from .cli import main
 
 __version__ = "0.1.0"
 __all__ = [
@@ -14,5 +19,8 @@ __all__ = [
     "extract_ecg",
     "parse_metadata",
     "DEFAULT_LAYOUT",
+    "RasterECGExtractor",
+    "extract_ecg_image",
+    "main",
     "__version__",
 ]

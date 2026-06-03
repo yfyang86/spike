@@ -61,26 +61,33 @@ print(ecg.fs, ecg.units_per_mm, ecg.strip_seconds)
 
 ### Command line
 
-Installing the package provides a `spike` console script:
+Installing the package provides a single `spike` console script that handles
+both a vector PDF and a raster image, and writes `<name>_rows.csv`,
+`<name>_leads.csv`, `<name>_meta.json` (and `_plot.png` with `--plot`) under
+`-o OUTDIR`:
 
 ```bash
-spike ECG01.pdf -o out/ --plot
+spike ECG01.pdf -o out/ --plot      # vector PDF -> exact recovery
+spike scan.png  -o out/             # raster scan/screenshot -> approximate
+spike --auto scanned.pdf -o out/    # image-only PDF -> rendered, then rasterized
 ```
 
-Writes `out/ECG01_rows.csv`, `out/ECG01_leads.csv`, `out/ECG01_meta.json`
-(and `_plot.png` with `--plot`).
+By default (`--type auto`) the input is auto-detected: a vector PDF goes to the
+lossless pipeline, a **scanned / image-only ("Ghostscript") PDF** is rendered to
+a bitmap and sent to the raster pipeline, and an image file goes straight to the
+raster pipeline. Pass `--type vector|raster` to force one.
 
 ```
-spike PDF [-o OUTDIR] [--gain 10] [--speed 25] [--fs 100]
-          [--units-per-mm FLOAT] [--polarity auto|pos|neg] [--plot]
+spike INPUT [-o OUTDIR] [--type auto|vector|raster] [--auto]
+            [--gain 10] [--speed 25] [--fs 100] [--plot]
+            [--units-per-mm FLOAT] [--polarity auto|pos|neg]   # vector
+            [--px-per-mm FLOAT] [--trace-darkness FLOAT]
+            [--no-suppress-grid] [--dpi 300]                   # raster
 ```
 
-You can also run the module directly without installing:
+Rendering a scanned PDF needs the optional extras: `pip install 'spike[image,meta]'`.
 
-```bash
-## QUICK START EXAMPLE
-python -m spike.ecg_pdf ECG01.pdf -o out/ --plot
-```
+You can also run it without installing: `python -m spike.cli ECG01.pdf -o out/`.
 
 ---
 
@@ -159,6 +166,38 @@ ecg = extract_ecg("file.pdf", layout=layout)
 
 ---
 
+## Raster images (scans / screenshots)
+
+When you only have a rasterized ECG (a scan, photo, or screenshot) rather than a
+vector PDF, `spike` can *digitize* it — necessarily lossy, but calibrated:
+
+```python
+from spike import extract_ecg_image
+
+ecg = extract_ecg_image("ECG_scan.png")   # -> the same ECGResult
+ecg.rows_to_csv("rows.csv")
+t, mv = ecg.leads["V5"]
+```
+
+Needs the `image` extra (`pip install ".[image]"` → pillow + scipy). The
+digitizer:
+
+* finds the grid scale from the **heavy 5 mm lines** (the fine 1 mm grid is
+  often dotted/faint and unreliable), so calibration is robust;
+* masks the trace by **darkness over the max-of-RGB channels**, so a coloured
+  (red / orange / pink) grid drops out and only the black trace remains; an
+  Otsu split then separates the trace from a dark/grey grid;
+* tracks each row's centreline with a follower that **climbs steep QRS limbs to
+  the true R/S peak** instead of averaging them, then splits the row into its
+  per-column leads (trimming the calibration pulse and inter-lead transitions).
+
+On a clean coloured-grid scan this is accurate — e.g. recovered
+`R(V5)+S(V1) = 1.69 mV` against a printed `1.70 mV`. A dark/near-black grid is
+the hard case: the grid contaminates the trace mask and amplitudes can be
+under-recovered. Tunable knobs (`px_per_mm`, `trace_darkness`, `window_frac`,
+`max_jump_frac`, …) are exposed on `RasterECGExtractor`. As always, **verify
+against the source image** — this is an extraction aid, not a diagnostic device.
+
 ## Limitations / honest caveats
 
 * **Vector PDFs only.** A scanned/raster ECG has no path segments to recover;
@@ -179,7 +218,7 @@ ecg = extract_ecg("file.pdf", layout=layout)
 
 ## License
 
-Apache 2
+Apache 2.0
 
 ## Contributor
 
